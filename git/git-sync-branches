@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Merge main into all local branches and push if there are no conflicts."""
+
+import subprocess
+import sys
+from enum import StrEnum
+
+
+class SyncState(StrEnum):
+    PUSHED = "PUSHED"
+    MERGE_CONFLICT = "MERGE_CONFLICT"
+    FAILED = "FAILED"
+
+
+def main():
+    # Verify we're inside a git repo.
+    if not _is_running_inside_git_repository():
+        print("Error: not inside a Git repository")
+        sys.exit(1)
+
+    local_branches = _get_local_branches()
+    non_main_branches = [branch for branch in local_branches if branch != "main"]
+
+    if not non_main_branches:
+        print("No branches to sync (only 'main' exists)")
+        sys.exit(0)
+
+    original_branch = _get_current_branch()
+    pushed = []
+    conflicted = []
+    failed = []
+
+    for branch in non_main_branches:
+        match _sync_branch(branch):
+            case SyncState.PUSHED:
+                pushed.append(branch)
+            case SyncState.MERGE_CONFLICT:
+                conflicted.append(branch)
+            case SyncState.FAILED:
+                failed.append(branch)
+
+    # Restore original branch.
+    _run(["git", "checkout", original_branch], capture=True)
+
+    # Summarize results.
+    print(
+        f"Pushed: {len(pushed)}  Conflicted: {len(conflicted)}  Failed: {len(failed)}"
+    )
+    if conflicted:
+        print(f"\tConflicts:  {', '.join(conflicted)}")
+    if failed:
+        print(f"\t Failures:   {', '.join(failed)}")
+
+
+def _run(cmd: list[str], capture=False, check=False):
+    """Run the given cmd via subprocess.
+
+    Args:
+        cmd (list[str]): The commands to run via subprocess.
+    """
+    return subprocess.run(
+        cmd,
+        capture_output=capture,
+        text=True,
+        check=check,
+    )
+
+
+def _sync_branch(branch: str) -> SyncState:
+    """Sync the given branch with `main`.
+
+    Args:
+        branch (str): The branch to sync with `main`.
+
+    Returns:
+        SyncState: The result of syncing branch with main.
+    """
+    print(f"Syncing {branch} ...")
+
+    checkout = _run(["git", "checkout", branch], capture=True)
+    if checkout.returncode != 0:
+        print(f"SKIPPING SYNC FOR '{branch}' (checkout failed — uncommitted changes?)")
+        return SyncState.FAILED
+
+    merge = _run(["git", "merge", "main", "--no-edit"], capture=True)
+    if merge.returncode != 0:
+        print(f"MERGE CONFLICT FOR '{branch}' — skipped (merge aborted)")
+        _run(["git", "merge", "--abort"], capture=True)
+        return SyncState.MERGE_CONFLICT
+
+    push = _run(["git", "push"], capture=True)
+    if push.returncode != 0:
+        print(f"MERGED BUT PUSH FAILED FOR '{branch}'")
+        return SyncState.FAILED
+
+    return SyncState.PUSHED
+
+
+def _get_current_branch() -> str:
+    """Return the name of the current branch for the Git repository in which this script is running.
+
+    Returns:
+        str: The name of the current branch for the Git repository in which this script is running.
+    """
+    result = _run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], capture=True, check=True
+    )
+    return result.stdout.strip()
+
+
+def _is_running_inside_git_repository() -> bool:
+    """Return True iff this script is being run from a Git repository.
+
+    Returns:
+        bool: True iff this script is being run from a git repository.
+    """
+    return (
+        _run(["git", "rev-parse", "--is-inside-work-tree"], capture=True).returncode
+        == 0
+    )
+
+
+def _get_local_branches() -> list[str]:
+    """Return the list of the local branches for the Git repository in which this script is running.
+
+    Returns:
+        list[str]: The list of the local branches for the Git repository in which this script is
+            running.
+    """
+    result = _run(
+        ["git", "branch", "--format=%(refname:short)"], capture=True, check=True
+    )
+    return [
+        branch_name.strip()
+        for branch_name in result.stdout.splitlines()
+        if branch_name.strip()
+    ]
+
+
+if __name__ == "__main__":
+    main()
