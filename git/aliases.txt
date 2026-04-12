@@ -1,0 +1,9 @@
+alias.co checkout
+alias.cl clone
+alias.pl pull
+alias.ps push
+alias.rb rebase
+alias.ci commit
+alias.st status
+alias.br branch
+alias.uc restore --staged
