@@ -26,6 +26,15 @@ def main():
         sys.exit(0)
 
     original_branch = _get_current_branch()
+
+    print("Updating main ...")
+    _run(["git", "checkout", "main"], capture=True)
+    pull = _run(["git", "pull"], capture=True)
+    if pull.returncode != 0:
+        print("Error: failed to pull latest changes for 'main'")
+        _run(["git", "checkout", original_branch], capture=True)
+        sys.exit(1)
+
     pushed = []
     conflicted = []
     failed = []
@@ -52,12 +61,7 @@ def main():
         print(f"\t Failures:   {', '.join(failed)}")
 
 
-def _run(cmd: list[str], capture=False, check=False):
-    """Run the given cmd via subprocess.
-
-    Args:
-        cmd (list[str]): The commands to run via subprocess.
-    """
+def _run(cmd, capture=False, check=False):
     return subprocess.run(
         cmd,
         capture_output=capture,
@@ -67,19 +71,15 @@ def _run(cmd: list[str], capture=False, check=False):
 
 
 def _sync_branch(branch: str) -> SyncState:
-    """Sync the given branch with `main`.
-
-    Args:
-        branch (str): The branch to sync with `main`.
-
-    Returns:
-        SyncState: The result of syncing branch with main.
-    """
     print(f"Syncing {branch} ...")
 
     checkout = _run(["git", "checkout", branch], capture=True)
     if checkout.returncode != 0:
         print(f"SKIPPING SYNC FOR '{branch}' (checkout failed — uncommitted changes?)")
+        return SyncState.FAILED
+
+    if not _has_remote_branch(branch):
+        print(f"SKIPPING SYNC FOR '{branch}' (no remote tracking branch)")
         return SyncState.FAILED
 
     merge = _run(["git", "merge", "main", "--no-edit"], capture=True)
@@ -94,6 +94,11 @@ def _sync_branch(branch: str) -> SyncState:
         return SyncState.FAILED
 
     return SyncState.PUSHED
+
+
+def _has_remote_branch(branch: str) -> bool:
+    result = _run(["git", "rev-parse", "--verify", f"origin/{branch}"], capture=True)
+    return result.returncode == 0
 
 
 def _get_current_branch() -> str:
